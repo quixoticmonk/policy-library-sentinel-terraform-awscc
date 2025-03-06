@@ -1,0 +1,50 @@
+# This policy ensures network ACLs don't allow unrestricted access to SSH or RDP ports
+# Resource: awscc_ec2_network_acl_entry
+
+import "tfplan/v2" as tfplan
+import "strings"
+
+# Get all network ACL entries
+get_nacl_entries = func() {
+    resources = filter tfplan.resource_changes as _, rc {
+        rc.type is "awscc_ec2_network_acl_entry" and
+        (rc.change.actions contains "create" or rc.change.actions contains "update")
+    }
+    return resources
+}
+
+# Check if entry allows unrestricted access to SSH or RDP
+is_unrestricted_ssh_rdp = func(entry) {
+    if entry.egress is false {
+        if entry.cidr_block is "0.0.0.0/0" or entry.ipv6_cidr_block is "::/0" {
+            if entry.protocol is "-1" {
+                return true
+            }
+            
+            if entry.protocol is "6" or entry.protocol is "tcp" {
+                if (entry.port_range is not null) {
+                    from_port = entry.port_range.from
+                    to_port = entry.port_range.to
+                    
+                    # Check if port range includes 22 or 3389
+                    if (from_port <= 22 and to_port >= 22) or 
+                       (from_port <= 3389 and to_port >= 3389) {
+                        return true
+                    }
+                }
+            }
+        }
+    }
+    return false
+}
+
+# Main rule
+no_unrestricted_ssh_rdp = rule {
+    all get_nacl_entries() as entry {
+        not is_unrestricted_ssh_rdp(entry.change.after)
+    }
+}
+
+main = rule {
+    no_unrestricted_ssh_rdp
+}

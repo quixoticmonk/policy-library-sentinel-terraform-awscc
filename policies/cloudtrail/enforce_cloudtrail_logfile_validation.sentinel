@@ -1,0 +1,24 @@
+# Policy that requires CloudTrail LogFile Validation to be enabled
+policy "enforce_cloudtrail_logfile_validation" {
+  source = func.plan.awscc_resources
+
+  # Filter to CloudTrail resources
+  cloudtrails = filter source as _, resource {
+    resource.type is "awscc_cloudtrail_trail"
+  }
+
+  # Validate CloudTrail has LogFile Validation enabled
+  validate = func() {
+    validated = true
+
+    for cloudtrails as _, trail {
+      if trail.change.after.enable_log_file_validation is null or
+         trail.change.after.enable_log_file_validation is false {
+        print("CloudTrail", trail.change.after.name, "does not have LogFile Validation enabled")
+        validated = false
+      }
+    }
+
+    return validated
+  }
+}

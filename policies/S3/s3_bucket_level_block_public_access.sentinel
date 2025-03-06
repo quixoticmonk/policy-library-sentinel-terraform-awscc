@@ -1,0 +1,71 @@
+# Policy: S3 general purpose buckets should have block public access settings enabled at a bucket level
+
+# Import the common library for helper functions and report generation
+import "tfplan/v2" as tfplan
+import "strings"
+
+# Import shared module (this would be your common reporting module)
+import "module/s3_policy_common" as common
+
+# Filter S3 buckets that are being created or updated
+s3_buckets = common.get_s3_buckets()
+
+# Check if bucket-level block public access settings are enabled
+check_s3_bucket_level_bpa = func(bucket) {
+    # Get bucket identifier for reporting
+    bucket_id = common.get_bucket_identifier(bucket)
+    
+    # Check bucket-level block public access configuration
+    if "public_access_block_configuration" in keys(bucket.change.after) and 
+       bucket.change.after.public_access_block_configuration is not null {
+        
+        # Check that all four settings are explicitly set at the bucket level
+        block_public_acls = bucket.change.after.public_access_block_configuration.block_public_acls is true
+        block_public_policy = bucket.change.after.public_access_block_configuration.block_public_policy is true
+        ignore_public_acls = bucket.change.after.public_access_block_configuration.ignore_public_acls is true
+        restrict_public_buckets = bucket.change.after.public_access_block_configuration.restrict_public_buckets is true
+        
+        if block_public_acls and block_public_policy and ignore_public_acls and restrict_public_buckets {
+            return {"compliant": true}
+        } else {
+            # Identify which specific settings are incorrect
+            missing_settings = []
+            if not block_public_acls {
+                append(missing_settings, "block_public_acls")
+            }
+            if not block_public_policy {
+                append(missing_settings, "block_public_policy")
+            }
+            if not ignore_public_acls {
+                append(missing_settings, "ignore_public_acls")
+            }
+            if not restrict_public_buckets {
+                append(missing_settings, "restrict_public_buckets")
+            }
+            
+            return {
+                "compliant": false,
+                "reason": "Block public access is not fully enabled at bucket level - missing settings: " + strings.join(missing_settings, ", ")
+            }
+        }
+    } else {
+        return {
+            "compliant": false,
+            "reason": "Bucket-level block public access configuration is missing"
+        }
+    }
+}
+
+# Apply the check to all S3 buckets
+violations = common.check_all_buckets(s3_buckets, check_s3_bucket_level_bpa)
+
+# Generate a report
+report = common.generate_report(violations, "S3 Block Public Access Enabled at Bucket Level")
+
+# Print the report
+print(report)
+
+# Set the result based on violations
+main = rule {
+    length(violations) == 0
+}

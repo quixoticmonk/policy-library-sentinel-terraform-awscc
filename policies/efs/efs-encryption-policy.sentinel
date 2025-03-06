@@ -1,0 +1,24 @@
+# This policy ensures encryption is enabled for all EFS file systems
+# Resource: awscc_efs_file_system
+
+import "tfplan/v2" as tfplan
+
+# Get all EFS file systems
+get_efs_file_systems = func() {
+    resources = filter tfplan.resource_changes as _, rc {
+        rc.type is "awscc_efs_file_system" and
+        (rc.change.actions contains "create" or rc.change.actions contains "update")
+    }
+    return resources
+}
+
+# Check if encryption is enabled
+efs_encryption_enabled = rule {
+    all get_efs_file_systems() as efs {
+        efs.change.after.encrypted is true
+    }
+}
+
+main = rule {
+    efs_encryption_enabled
+}

@@ -1,0 +1,25 @@
+# This policy ensures EC2 instances only allow IMDSv2
+# Resource: awscc_ec2_instance
+
+import "tfplan/v2" as tfplan
+
+# Get all EC2 instances
+get_ec2_instances = func() {
+    resources = filter tfplan.resource_changes as _, rc {
+        rc.type is "awscc_ec2_instance" and
+        (rc.change.actions contains "create" or rc.change.actions contains "update")
+    }
+    return resources
+}
+
+# Check if IMDSv2 is required
+imdsv2_required = rule {
+    all get_ec2_instances() as instance {
+        instance.change.after.metadata_options is not null and
+        instance.change.after.metadata_options.http_tokens is "required"
+    }
+}
+
+main = rule {
+    imdsv2_required
+}

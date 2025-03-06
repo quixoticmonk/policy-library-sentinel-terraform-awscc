@@ -1,0 +1,24 @@
+# Policy that ensures RDS instances do not have public access enabled
+policy "enforce_rds_no_public_access" {
+  source = func.plan.awscc_resources
+
+  # Filter to RDS DB instance resources
+  rds_instances = filter source as _, resource {
+    resource.type is "awscc_rds_db_instance"
+  }
+
+  # Validate RDS instances do not have public access
+  validate = func() {
+    validated = true
+
+    for rds_instances as _, instance {
+      if instance.change.after.publicly_accessible is null or
+         instance.change.after.publicly_accessible is true {
+        print("RDS instance", instance.change.after.db_instance_identifier, "has public access enabled")
+        validated = false
+      }
+    }
+
+    return validated
+  }
+}

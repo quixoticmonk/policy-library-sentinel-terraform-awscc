@@ -1,0 +1,25 @@
+# Policy that requires AWS KMS keys to have automatic rotation enabled
+policy "enforce_kms_key_rotation" {
+  source = func.plan.awscc_resources
+
+  # Filter to KMS key resources
+  kms_keys = filter source as _, resource {
+    resource.type is "awscc_kms_key"
+  }
+
+  # Validate KMS keys have key rotation enabled
+  validate = func() {
+    validated = true
+
+    for kms_keys as address, key {
+      # Check if key rotation is enabled
+      if key.change.after.enable_key_rotation is null or
+         key.change.after.enable_key_rotation is false {
+        print("KMS key", address, "does not have automatic key rotation enabled")
+        validated = false
+      }
+    }
+
+    return validated
+  }
+}

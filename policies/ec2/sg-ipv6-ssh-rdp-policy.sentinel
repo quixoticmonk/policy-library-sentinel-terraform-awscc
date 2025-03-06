@@ -1,0 +1,52 @@
+# This policy ensures security groups don't allow unrestricted IPv6 access to SSH and RDP
+# Resource: awscc_ec2_security_group
+
+import "tfplan/v2" as tfplan
+import "strings"
+
+# Get all security groups
+get_security_groups = func() {
+    resources = filter tfplan.resource_changes as _, rc {
+        rc.type is "awscc_ec2_security_group" and
+        (rc.change.actions contains "create" or rc.change.actions contains "update")
+    }
+    return resources
+}
+
+# Check for unrestricted SSH and RDP access via IPv6
+has_unrestricted_ssh_rdp_ipv6 = func(sg) {
+    if sg.security_group_ingress is null {
+        return false
+    }
+    
+    for sg.security_group_ingress as rule {
+        if rule.cidr_ipv6 is "::/0" {
+            if rule.ip_protocol is "-1" {
+                return true
+            }
+            
+            if rule.ip_protocol is "tcp" {
+                from_port = rule.from_port
+                to_port = rule.to_port
+                
+                # Check for SSH (22) and RDP (3389)
+                if (from_port <= 22 and to_port >= 22) or
+                   (from_port <= 3389 and to_port >= 3389) {
+                    return true
+                }
+            }
+        }
+    }
+    return false
+}
+
+# Main rule
+no_unrestricted_ssh_rdp_ipv6 = rule {
+    all get_security_groups() as sg {
+        not has_unrestricted_ssh_rdp_ipv6(sg.change.after)
+    }
+}
+
+main = rule {
+    no_unrestricted_ssh_rdp_ipv6
+}

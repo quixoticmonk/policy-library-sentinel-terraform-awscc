@@ -1,0 +1,57 @@
+# Policy: S3 general purpose buckets should require ssl for all requests
+
+# Import the common library for helper functions and report generation
+import "tfplan/v2" as tfplan
+
+# Import shared module (this would be your common reporting module)
+import "module/s3_policy_common" as common
+
+# Filter S3 buckets that are being created or updated
+s3_buckets = common.get_s3_buckets()
+
+# Check if SSL is required for all requests
+check_s3_ssl_required = func(bucket) {
+    # Get bucket identifier for reporting
+    bucket_id = common.get_bucket_identifier(bucket)
+    
+    # Check for bucket policy that enforces SSL
+    has_ssl_policy = false
+    
+    # For AWSCC provider, bucket policy might be in a separate resource
+    # We need to check if there's a policy attached that requires SSL
+    
+    # If the bucket has a policy directly attached
+    if "policy" in keys(bucket.change.after) and bucket.change.after.policy is not null {
+        policy_str = bucket.change.after.policy
+        
+        # Check if policy contains SSL enforcement
+        if policy_str contains "aws:SecureTransport" and 
+           policy_str contains "\"Bool\":{\"aws:SecureTransport\":\"false\"" and
+           policy_str contains "\"Effect\":\"Deny\"" {
+            has_ssl_policy = true
+        }
+    }
+    
+    if has_ssl_policy {
+        return {"compliant": true}
+    } else {
+        return {
+            "compliant": false,
+            "reason": "Bucket policy does not enforce SSL for all requests"
+        }
+    }
+}
+
+# Apply the check to all S3 buckets
+violations = common.check_all_buckets(s3_buckets, check_s3_ssl_required)
+
+# Generate a report
+report = common.generate_report(violations, "S3 SSL Required for All Requests")
+
+# Print the report
+print(report)
+
+# Set the result based on violations
+main = rule {
+    length(violations) == 0
+}

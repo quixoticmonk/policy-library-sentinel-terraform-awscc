@@ -1,0 +1,54 @@
+# This policy ensures IAM policies don't grant full '*' administrative privileges
+# Resource: awscc_iam_policy
+
+import "tfplan/v2" as tfplan
+import "json"
+
+# Get all IAM policies
+get_iam_policies = func() {
+    resources = filter tfplan.resource_changes as _, rc {
+        rc.type is "awscc_iam_policy" and
+        (rc.change.actions contains "create" or rc.change.actions contains "update")
+    }
+    return resources
+}
+
+# Check for '*' admin privileges in policy documents
+has_admin_privileges = func(policy_document) {
+    if policy_document is null {
+        return false
+    }
+    
+    doc = json.unmarshal(policy_document)
+    
+    for doc.Statement as statement {
+        if statement.Effect is "Allow" {
+            if statement.Action is "*" {
+                return true
+            }
+            if statement.Action is ["*"] {
+                return true
+            }
+            if "Action" in keys(statement) and statement.Resource is "*" {
+                for statement.Action as action {
+                    if action is "*" {
+                        return true
+                    }
+                }
+            }
+        }
+    }
+    return false
+}
+
+# Main rule
+no_admin_privileges = rule {
+    all get_iam_policies() as policy {
+        policy.change.after.policy_document is not null and
+        not has_admin_privileges(policy.change.after.policy_document)
+    }
+}
+
+main = rule {
+    no_admin_privileges
+}

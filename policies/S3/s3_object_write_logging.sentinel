@@ -1,0 +1,115 @@
+# Policy: Ensure that Object-level logging for write events is enabled for S3 buckets
+
+# Import the common library for helper functions and report generation
+import "tfplan/v2" as tfplan
+
+# Import shared module (this would be your common reporting module)
+import "module/s3_policy_common" as common
+
+# Filter S3 buckets that are being created or updated
+s3_buckets = common.get_s3_buckets()
+
+# Get all CloudTrail resources that might be logging S3 object-level write events
+cloudtrails = filter tfplan.resource_changes as _, rc {
+    rc.type is "awscc_cloudtrail_trail" and
+    (rc.mode is "managed" or rc.mode is "data") and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# Check if object-level write logging is enabled for a bucket
+check_s3_object_write_logging = func(bucket) {
+    bucket_id = common.get_bucket_identifier(bucket)
+    
+    # Check if any CloudTrail is configured to log write events for this bucket
+    has_write_logging = false
+    
+    for cloudtrails as _, trail {
+        # Check if the trail has event selectors with S3 object-level write events enabled
+        if "event_selectors" in keys(trail.change.after) {
+            for trail.change.after.event_selectors as _, selector {
+                # Check if write events are enabled
+                write_events_enabled = selector.read_write_type is "WriteOnly" or selector.read_write_type is "All"
+                
+                # Check if this selector applies to our bucket
+                applies_to_bucket = false
+                
+                if "data_resources" in keys(selector) {
+                    for selector.data_resources as _, resource {
+                        if resource.type is "AWS::S3::Object" {
+                            for resource.values as _, arn {
+                                # Check if this ARN applies to our bucket
+                                if arn contains "arn:aws:s3:::" + bucket_id + "/" {
+                                    applies_to_bucket = true
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if write_events_enabled and applies_to_bucket {
+                    has_write_logging = true
+                }
+            }
+        }
+        
+        # Check advanced event selectors (newer CloudTrail feature)
+        if "advanced_event_selectors" in keys(trail.change.after) {
+            for trail.change.after.advanced_event_selectors as _, advanced_selector {
+                # Initialize flags to track if this selector enables write events for our bucket
+                has_write_events = false
+                applies_to_s3_objects = false
+                applies_to_bucket = false
+                
+                # Check all field selectors in this advanced event selector
+                for advanced_selector.field_selectors as _, field {
+                    if field.field is "eventCategory" and "Data" in field.equals {
+                        has_write_events = true
+                    }
+                    
+                    if field.field is "resources.type" and "AWS::S3::Object" in field.equals {
+                        applies_to_s3_objects = true
+                    }
+                    
+                    if field.field is "readOnly" and "false" in field.equals {
+                        has_write_events = true
+                    }
+                    
+                    if field.field is "resources.ARN" {
+                        for field.equals as _, arn {
+                            if arn contains "arn:aws:s3:::" + bucket_id + "/" {
+                                applies_to_bucket = true
+                            }
+                        }
+                    }
+                }
+                
+                if has_write_events and applies_to_s3_objects and (applies_to_bucket or not applies_to_bucket) {
+                    has_write_logging = true
+                }
+            }
+        }
+    }
+    
+    if has_write_logging {
+        return {"compliant": true}
+    } else {
+        return {
+            "compliant": false,
+            "reason": "Object-level logging for write events is not enabled for this bucket"
+        }
+    }
+}
+
+# Apply the check to all S3 buckets
+violations = common.check_all_buckets(s3_buckets, check_s3_object_write_logging)
+
+# Generate a report
+report = common.generate_report(violations, "S3 Object-Level Write Logging")
+
+# Print the report
+print(report)
+
+# Set the result based on violations
+main = rule {
+    length(violations) == 0
+}

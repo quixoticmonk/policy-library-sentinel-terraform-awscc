@@ -1,0 +1,51 @@
+# Policy: S3 general purpose buckets should have MFA delete enabled
+
+# Import the common library for helper functions and report generation
+import "tfplan/v2" as tfplan
+
+# Import shared module (this would be your common reporting module)
+import "module/s3_policy_common" as common
+
+# Filter S3 buckets that are being created or updated
+s3_buckets = common.get_s3_buckets()
+
+# Check if MFA Delete is enabled
+check_s3_mfa_delete = func(bucket) {
+    # Get bucket identifier for reporting
+    bucket_id = common.get_bucket_identifier(bucket)
+    
+    # Check for MFA Delete in versioning configuration
+    if "versioning_configuration" in keys(bucket.change.after) and 
+       bucket.change.after.versioning_configuration is not null {
+        
+        # Check if MFA Delete is enabled
+        if "mfa_delete" in keys(bucket.change.after.versioning_configuration) and
+           bucket.change.after.versioning_configuration.mfa_delete is "Enabled" {
+            return {"compliant": true}
+        } else {
+            return {
+                "compliant": false,
+                "reason": "MFA Delete is not enabled in bucket versioning configuration"
+            }
+        }
+    } else {
+        return {
+            "compliant": false,
+            "reason": "Versioning configuration is missing or MFA Delete setting is not specified"
+        }
+    }
+}
+
+# Apply the check to all S3 buckets
+violations = common.check_all_buckets(s3_buckets, check_s3_mfa_delete)
+
+# Generate a report
+report = common.generate_report(violations, "S3 MFA Delete Enabled")
+
+# Print the report
+print(report)
+
+# Set the result based on violations
+main = rule {
+    length(violations) == 0
+}

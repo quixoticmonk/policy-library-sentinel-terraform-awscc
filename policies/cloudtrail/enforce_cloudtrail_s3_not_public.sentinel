@@ -1,0 +1,51 @@
+# Policy that requires CloudTrail S3 Bucket to not be public
+policy "enforce_cloudtrail_s3_not_public" {
+  source = func.plan.awscc_resources
+
+  # Filter to CloudTrail resources
+  cloudtrails = filter source as _, resource {
+    resource.type is "awscc_cloudtrail_trail"
+  }
+
+  # Filter to S3 bucket resources
+  s3_buckets = filter source as _, resource {
+    resource.type is "awscc_s3_bucket"
+  }
+
+  # Validate CloudTrail S3 buckets are not public
+  validate = func() {
+    validated = true
+
+    for cloudtrails as _, trail {
+      # Get bucket name from CloudTrail configuration
+      bucket_name = trail.change.after.s3_bucket_name
+
+      # Find the matching S3 bucket resource
+      matched_buckets = filter s3_buckets as _, bucket {
+        bucket.change.after.bucket_name is bucket_name
+      }
+
+      # For each matching bucket, validate no public access
+      for matched_buckets as _, bucket {
+        # Check for Public Access Block Configuration
+        if bucket.change.after.public_access_block_configuration is null {
+          print("CloudTrail S3 bucket", bucket_name, "does not have public access block configuration")
+          validated = false
+          continue
+        }
+
+        # Check all public access block settings
+        pac = bucket.change.after.public_access_block_configuration
+        if pac.block_public_acls is false or
+           pac.block_public_policy is false or
+           pac.ignore_public_acls is false or
+           pac.restrict_public_buckets is false {
+          print("CloudTrail S3 bucket", bucket_name, "allows public access")
+          validated = false
+        }
+      }
+    }
+
+    return validated
+  }
+}

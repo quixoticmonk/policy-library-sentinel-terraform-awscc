@@ -1,0 +1,24 @@
+# This policy ensures IAM users don't have policies directly attached
+# Resources: awscc_iam_user_policy, awscc_iam_user
+
+import "tfplan/v2" as tfplan
+
+# Check for user policies
+no_user_policies = rule {
+    length(filter tfplan.resource_changes as _, rc {
+        rc.type is "awscc_iam_user_policy" and
+        (rc.change.actions contains "create" or rc.change.actions contains "update")
+    }) is 0
+}
+
+# Check for policy attachments to users
+no_policy_attachments = rule {
+    length(filter tfplan.resource_changes as _, rc {
+        rc.type is "awscc_iam_user_policy_attachment" and
+        (rc.change.actions contains "create" or rc.change.actions contains "update")
+    }) is 0
+}
+
+main = rule {
+    no_user_policies and no_policy_attachments
+}

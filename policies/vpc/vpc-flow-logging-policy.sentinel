@@ -1,0 +1,36 @@
+# This policy ensures that VPC flow logging is enabled for all VPCs
+# Resource: awscc_ec2_vpc
+
+import "tfplan/v2" as tfplan
+import "strings"
+
+# Get all VPC resources
+get_vpcs = func() {
+    resources = filter tfplan.resource_changes as _, rc {
+        rc.type is "awscc_ec2_vpc" and
+        (rc.change.actions contains "create" or rc.change.actions contains "update")
+    }
+    return resources
+}
+
+# Check if flow logging is enabled for the VPC
+has_flow_logging = func(vpc_id) {
+    flow_logs = filter tfplan.resource_changes as _, rc {
+        rc.type is "awscc_ec2_flow_log" and
+        (rc.change.actions contains "create" or rc.change.actions contains "update") and
+        rc.change.after.resource_id is vpc_id
+    }
+    return length(flow_logs) > 0
+}
+
+# Main rule
+vpcs_with_flow_logs = rule {
+    all get_vpcs() as vpc {
+        vpc.change.after.id is not null and
+        has_flow_logging(vpc.change.after.id)
+    }
+}
+
+main = rule {
+    vpcs_with_flow_logs
+}

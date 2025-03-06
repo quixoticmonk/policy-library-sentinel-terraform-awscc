@@ -1,0 +1,24 @@
+# Policy that requires CloudTrail to have encryption at-rest enabled
+policy "enforce_cloudtrail_encryption" {
+  source = func.plan.awscc_resources
+
+  # Filter to CloudTrail resources
+  cloudtrails = filter source as _, resource {
+    resource.type is "awscc_cloudtrail_trail"
+  }
+
+  # Validate CloudTrail has encryption at-rest enabled
+  validate = func() {
+    validated = true
+
+    for cloudtrails as _, trail {
+      if trail.change.after.kms_key_id is null or
+         trail.change.after.kms_key_id is "" {
+        print("CloudTrail", trail.change.after.name, "does not have encryption at-rest enabled (KMS Key ID not set)")
+        validated = false
+      }
+    }
+
+    return validated
+  }
+}

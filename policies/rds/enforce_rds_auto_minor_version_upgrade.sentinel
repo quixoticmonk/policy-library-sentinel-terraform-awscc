@@ -1,0 +1,24 @@
+# Policy that requires RDS instances to have Auto Minor Version Upgrade enabled
+policy "enforce_rds_auto_minor_version_upgrade" {
+  source = func.plan.awscc_resources
+
+  # Filter to RDS DB instance resources
+  rds_instances = filter source as _, resource {
+    resource.type is "awscc_rds_db_instance"
+  }
+
+  # Validate RDS instances have Auto Minor Version Upgrade enabled
+  validate = func() {
+    validated = true
+
+    for rds_instances as _, instance {
+      if instance.change.after.auto_minor_version_upgrade is null or
+         instance.change.after.auto_minor_version_upgrade is false {
+        print("RDS instance", instance.change.after.db_instance_identifier, "does not have Auto Minor Version Upgrade enabled")
+        validated = false
+      }
+    }
+
+    return validated
+  }
+}

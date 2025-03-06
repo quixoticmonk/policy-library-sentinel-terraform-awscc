@@ -22,3 +22,5 @@ policy "enforce_rds_no_public_access" {
     return validated
   }
 }
+
+#TODO include reporting

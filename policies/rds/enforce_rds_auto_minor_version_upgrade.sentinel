@@ -22,3 +22,5 @@ policy "enforce_rds_auto_minor_version_upgrade" {
     return validated
   }
 }
+
+#TODO include reporting

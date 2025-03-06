@@ -22,3 +22,5 @@ policy "enforce_rds_encryption_at_rest" {
     return validated
   }
 }
+
+#TODO include reporting

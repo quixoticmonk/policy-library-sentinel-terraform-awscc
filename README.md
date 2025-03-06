@@ -1,0 +1,1 @@
+# Sentinel policy library for CIS benchmark for supported AWSCC resources

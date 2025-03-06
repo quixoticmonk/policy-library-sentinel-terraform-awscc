@@ -1,51 +1,65 @@
-# Policy that requires CloudTrail S3 Bucket to not be public
-policy "enforce_cloudtrail_s3_not_public" {
-  source = func.plan.awscc_resources
+# Policy that ensures CloudTrail S3 buckets are not publicly accessible
 
-  # Filter to CloudTrail resources
-  cloudtrails = filter source as _, resource {
-    resource.type is "awscc_cloudtrail_trail"
-  }
+import "tfplan/v2" as tfplan
 
-  # Filter to S3 bucket resources
-  s3_buckets = filter source as _, resource {
-    resource.type is "awscc_s3_bucket"
-  }
-
-  # Validate CloudTrail S3 buckets are not public
-  validate = func() {
-    validated = true
-
-    for cloudtrails as _, trail {
-      # Get bucket name from CloudTrail configuration
-      bucket_name = trail.change.after.s3_bucket_name
-
-      # Find the matching S3 bucket resource
-      matched_buckets = filter s3_buckets as _, bucket {
-        bucket.change.after.bucket_name is bucket_name
-      }
-
-      # For each matching bucket, validate no public access
-      for matched_buckets as _, bucket {
-        # Check for Public Access Block Configuration
-        if bucket.change.after.public_access_block_configuration is null {
-          print("CloudTrail S3 bucket", bucket_name, "does not have public access block configuration")
-          validated = false
-          continue
-        }
-
-        # Check all public access block settings
-        pac = bucket.change.after.public_access_block_configuration
-        if pac.block_public_acls is false or
-           pac.block_public_policy is false or
-           pac.ignore_public_acls is false or
-           pac.restrict_public_buckets is false {
-          print("CloudTrail S3 bucket", bucket_name, "allows public access")
-          validated = false
-        }
-      }
-    }
-
-    return validated
-  }
+# Get all AWS CloudTrail resources
+allCloudTrails = filter tfplan.resource_changes as _, rc {
+    rc.type is "awscc_cloudtrail_trail" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
 }
+
+# Get all S3 buckets
+allS3Buckets = filter tfplan.resource_changes as _, rc {
+    rc.type is "awscc_s3_bucket" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# Find CloudTrail S3 buckets
+cloudtrailBuckets = []
+
+for allCloudTrails as _, trail {
+    if (keys(trail.change.after) contains "s3_bucket_name") {
+        bucketName = trail.change.after.s3_bucket_name
+        cloudtrailBuckets = append(cloudtrailBuckets, bucketName)
+    }
+}
+
+# Check if those buckets have public access blocks
+violatingBuckets = []
+
+for allS3Buckets as _, bucket {
+    bucketName = bucket.change.after.bucket_name
+    
+    if bucketName in cloudtrailBuckets {
+        # Check if public access is blocked
+        if !(keys(bucket.change.after) contains "public_access_block_configuration") {
+            violatingBuckets = append(violatingBuckets, bucketName)
+        } else {
+            publicAccessBlock = bucket.change.after.public_access_block_configuration
+            
+            # Check all public access block settings
+            if !(publicAccessBlock.block_public_acls is true and
+                 publicAccessBlock.block_public_policy is true and
+                 publicAccessBlock.ignore_public_acls is true and
+                 publicAccessBlock.restrict_public_buckets is true) {
+                violatingBuckets = append(violatingBuckets, bucketName)
+            }
+        }
+    }
+}
+
+# Print report for debugging and reporting
+if length(cloudtrailBuckets) > 0 {
+    print("CloudTrail S3 Bucket Public Access Check")
+    print("=======================================")
+    print("CloudTrail S3 Buckets found:", cloudtrailBuckets)
+    
+    if length(violatingBuckets) > 0 {
+        print("Violating buckets (public access not blocked):", violatingBuckets)
+    } else {
+        print("All CloudTrail S3 buckets have public access blocked.")
+    }
+}
+
+# Rule compliance
+cloudtrail_s3_not_public = length(violatingBuckets) == 0

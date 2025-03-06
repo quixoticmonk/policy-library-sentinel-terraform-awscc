@@ -1,24 +1,37 @@
-# Policy that requires CloudTrail LogFile Validation to be enabled
-policy "enforce_cloudtrail_logfile_validation" {
-  source = func.plan.awscc_resources
+# Policy that requires CloudTrail to have log file validation enabled
 
-  # Filter to CloudTrail resources
-  cloudtrails = filter source as _, resource {
-    resource.type is "awscc_cloudtrail_trail"
-  }
+import "tfplan/v2" as tfplan
 
-  # Validate CloudTrail has LogFile Validation enabled
-  validate = func() {
-    validated = true
-
-    for cloudtrails as _, trail {
-      if trail.change.after.enable_log_file_validation is null or
-         trail.change.after.enable_log_file_validation is false {
-        print("CloudTrail", trail.change.after.name, "does not have LogFile Validation enabled")
-        validated = false
-      }
-    }
-
-    return validated
-  }
+# Get all AWS CloudTrail resources
+allCloudTrails = filter tfplan.resource_changes as _, rc {
+    rc.type is "awscc_cloudtrail_trail" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
 }
+
+# Check for log file validation
+violatingTrails = []
+
+for allCloudTrails as _, trail {
+    trailName = trail.change.after.name
+    
+    # Check if log file validation is enabled
+    if !(keys(trail.change.after) contains "enable_log_file_validation") {
+        violatingTrails = append(violatingTrails, trailName)
+    } else if trail.change.after.enable_log_file_validation is false {
+        violatingTrails = append(violatingTrails, trailName)
+    }
+}
+
+# Print report for debugging and reporting
+print("CloudTrail Log File Validation Check")
+print("==================================")
+print("CloudTrail resources evaluated:", length(allCloudTrails))
+
+if length(violatingTrails) > 0 {
+    print("Violating trails (log file validation not enabled):", violatingTrails)
+} else {
+    print("All CloudTrail resources have log file validation enabled.")
+}
+
+# Rule compliance
+cloudtrail_log_validation_enabled = length(violatingTrails) == 0

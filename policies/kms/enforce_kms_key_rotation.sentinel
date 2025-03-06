@@ -1,27 +1,50 @@
-# Policy that requires AWS KMS keys to have automatic rotation enabled
-policy "enforce_kms_key_rotation" {
-  source = func.plan.awscc_resources
+# Policy that requires AWS KMS keys to have rotation enabled
 
-  # Filter to KMS key resources
-  kms_keys = filter source as _, resource {
-    resource.type is "awscc_kms_key"
-  }
+import "tfplan/v2" as tfplan
 
-  # Validate KMS keys have key rotation enabled
-  validate = func() {
-    validated = true
-
-    for kms_keys as address, key {
-      # Check if key rotation is enabled
-      if key.change.after.enable_key_rotation is null or
-         key.change.after.enable_key_rotation is false {
-        print("KMS key", address, "does not have automatic key rotation enabled")
-        validated = false
-      }
-    }
-
-    return validated
-  }
+# Get all AWS KMS key resources
+allKMSKeys = filter tfplan.resource_changes as _, rc {
+    rc.type is "awscc_kms_key" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
 }
 
-#TODO include reporting
+# Check for key rotation configuration
+violatingKeys = []
+
+for allKMSKeys as _, key {
+    keyId = key.change.after.key_id
+    keyAlias = ""
+    
+    if (keys(key.change.after) contains "description") {
+        keyAlias = key.change.after.description
+    }
+    
+    # Check if key rotation is enabled
+    if !(keys(key.change.after) contains "enable_key_rotation") {
+        append_key = keyId
+        if keyAlias != "" {
+            append_key = append_key + " (" + keyAlias + ")"
+        }
+        violatingKeys = append(violatingKeys, append_key)
+    } else if key.change.after.enable_key_rotation is false {
+        append_key = keyId
+        if keyAlias != "" {
+            append_key = append_key + " (" + keyAlias + ")"
+        }
+        violatingKeys = append(violatingKeys, append_key)
+    }
+}
+
+# Print report for debugging and reporting
+print("AWS KMS Key Rotation Check")
+print("========================")
+print("KMS keys evaluated:", length(allKMSKeys))
+
+if length(violatingKeys) > 0 {
+    print("Violating KMS keys (rotation not enabled):", violatingKeys)
+} else {
+    print("All KMS keys have rotation enabled.")
+}
+
+# Rule compliance
+kms_key_rotation_enabled = length(violatingKeys) == 0

@@ -1,26 +1,37 @@
-# Policy that ensures RDS instances do not have public access enabled
-policy "enforce_rds_no_public_access" {
-  source = func.plan.awscc_resources
+# Policy that ensures RDS instances are not publicly accessible
 
-  # Filter to RDS DB instance resources
-  rds_instances = filter source as _, resource {
-    resource.type is "awscc_rds_db_instance"
-  }
+import "tfplan/v2" as tfplan
 
-  # Validate RDS instances do not have public access
-  validate = func() {
-    validated = true
-
-    for rds_instances as _, instance {
-      if instance.change.after.publicly_accessible is null or
-         instance.change.after.publicly_accessible is true {
-        print("RDS instance", instance.change.after.db_instance_identifier, "has public access enabled")
-        validated = false
-      }
-    }
-
-    return validated
-  }
+# Get all RDS DB instance resources
+allRDSInstances = filter tfplan.resource_changes as _, rc {
+    rc.type is "awscc_rds_db_instance" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
 }
 
-#TODO include reporting
+# Check for public access configuration
+violatingInstances = []
+
+for allRDSInstances as _, instance {
+    instanceId = instance.change.after.db_instance_identifier
+    
+    # Check if instance is publicly accessible
+    if (keys(instance.change.after) contains "publicly_accessible") {
+        if instance.change.after.publicly_accessible is true {
+            violatingInstances = append(violatingInstances, instanceId)
+        }
+    }
+}
+
+# Print report for debugging and reporting
+print("RDS Public Access Check")
+print("=====================")
+print("RDS instances evaluated:", length(allRDSInstances))
+
+if length(violatingInstances) > 0 {
+    print("Violating RDS instances (publicly accessible):", violatingInstances)
+} else {
+    print("All RDS instances are not publicly accessible.")
+}
+
+# Rule compliance
+rds_not_public = length(violatingInstances) == 0

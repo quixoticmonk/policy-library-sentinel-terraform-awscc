@@ -1,26 +1,37 @@
 # Policy that requires RDS instances to have encryption at rest enabled
-policy "enforce_rds_encryption_at_rest" {
-  source = func.plan.awscc_resources
 
-  # Filter to RDS DB instance resources
-  rds_instances = filter source as _, resource {
-    resource.type is "awscc_rds_db_instance"
-  }
+import "tfplan/v2" as tfplan
 
-  # Validate RDS instances have encryption at rest enabled
-  validate = func() {
-    validated = true
-
-    for rds_instances as _, instance {
-      if instance.change.after.storage_encrypted is null or
-         instance.change.after.storage_encrypted is false {
-        print("RDS instance", instance.change.after.db_instance_identifier, "does not have encryption at rest enabled")
-        validated = false
-      }
-    }
-
-    return validated
-  }
+# Get all RDS DB instance resources
+allRDSInstances = filter tfplan.resource_changes as _, rc {
+    rc.type is "awscc_rds_db_instance" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
 }
 
-#TODO include reporting
+# Check for encryption configuration
+violatingInstances = []
+
+for allRDSInstances as _, instance {
+    instanceId = instance.change.after.db_instance_identifier
+    
+    # Check if storage encryption is enabled
+    if !(keys(instance.change.after) contains "storage_encrypted") {
+        violatingInstances = append(violatingInstances, instanceId)
+    } else if instance.change.after.storage_encrypted is false {
+        violatingInstances = append(violatingInstances, instanceId)
+    }
+}
+
+# Print report for debugging and reporting
+print("RDS Encryption at Rest Check")
+print("==========================")
+print("RDS instances evaluated:", length(allRDSInstances))
+
+if length(violatingInstances) > 0 {
+    print("Violating RDS instances (encryption not enabled):", violatingInstances)
+} else {
+    print("All RDS instances have encryption at rest enabled.")
+}
+
+# Rule compliance
+rds_encryption_enabled = length(violatingInstances) == 0

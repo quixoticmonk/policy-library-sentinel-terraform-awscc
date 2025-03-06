@@ -1,26 +1,37 @@
-# Policy that requires RDS instances to have Auto Minor Version Upgrade enabled
-policy "enforce_rds_auto_minor_version_upgrade" {
-  source = func.plan.awscc_resources
+# Policy that requires RDS instances to have auto minor version upgrade enabled
 
-  # Filter to RDS DB instance resources
-  rds_instances = filter source as _, resource {
-    resource.type is "awscc_rds_db_instance"
-  }
+import "tfplan/v2" as tfplan
 
-  # Validate RDS instances have Auto Minor Version Upgrade enabled
-  validate = func() {
-    validated = true
-
-    for rds_instances as _, instance {
-      if instance.change.after.auto_minor_version_upgrade is null or
-         instance.change.after.auto_minor_version_upgrade is false {
-        print("RDS instance", instance.change.after.db_instance_identifier, "does not have Auto Minor Version Upgrade enabled")
-        validated = false
-      }
-    }
-
-    return validated
-  }
+# Get all RDS DB instance resources
+allRDSInstances = filter tfplan.resource_changes as _, rc {
+    rc.type is "awscc_rds_db_instance" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
 }
 
-#TODO include reporting
+# Check for auto minor version upgrade configuration
+violatingInstances = []
+
+for allRDSInstances as _, instance {
+    instanceId = instance.change.after.db_instance_identifier
+    
+    # Check if auto minor version upgrade is enabled
+    if !(keys(instance.change.after) contains "auto_minor_version_upgrade") {
+        violatingInstances = append(violatingInstances, instanceId)
+    } else if instance.change.after.auto_minor_version_upgrade is false {
+        violatingInstances = append(violatingInstances, instanceId)
+    }
+}
+
+# Print report for debugging and reporting
+print("RDS Auto Minor Version Upgrade Check")
+print("==================================")
+print("RDS instances evaluated:", length(allRDSInstances))
+
+if length(violatingInstances) > 0 {
+    print("Violating RDS instances (auto minor version upgrade not enabled):", violatingInstances)
+} else {
+    print("All RDS instances have auto minor version upgrade enabled.")
+}
+
+# Rule compliance
+rds_auto_minor_upgrade_enabled = length(violatingInstances) == 0

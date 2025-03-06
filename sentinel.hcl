@@ -83,10 +83,7 @@ policy "enforce_cloudtrail_encryption" {
   enforcement_level = "advisory"
 }
 
-policy "enforce_kms_key_rotation" {
-  source = "./policies/kms/enforce_kms_key_rotation.sentinel"
-  enforcement_level = "advisory"
+policy "kms-key-rotation-enabled" {
+    source = "./kms-key-rotation-policy.sentinel"
+    enforcement_level = "hard-mandatory"
 }
-
-
-

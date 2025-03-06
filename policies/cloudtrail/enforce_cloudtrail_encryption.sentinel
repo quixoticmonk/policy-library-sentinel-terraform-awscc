@@ -1,24 +1,37 @@
-# Policy that requires CloudTrail to have encryption at-rest enabled
-policy "enforce_cloudtrail_encryption" {
-  source = func.plan.awscc_resources
+# Policy that requires CloudTrail to have encryption at rest enabled
 
-  # Filter to CloudTrail resources
-  cloudtrails = filter source as _, resource {
-    resource.type is "awscc_cloudtrail_trail"
-  }
+import "tfplan/v2" as tfplan
 
-  # Validate CloudTrail has encryption at-rest enabled
-  validate = func() {
-    validated = true
-
-    for cloudtrails as _, trail {
-      if trail.change.after.kms_key_id is null or
-         trail.change.after.kms_key_id is "" {
-        print("CloudTrail", trail.change.after.name, "does not have encryption at-rest enabled (KMS Key ID not set)")
-        validated = false
-      }
-    }
-
-    return validated
-  }
+# Get all AWS CloudTrail resources
+allCloudTrails = filter tfplan.resource_changes as _, rc {
+    rc.type is "awscc_cloudtrail_trail" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
 }
+
+# Check for KMS key configuration
+violatingTrails = []
+
+for allCloudTrails as _, trail {
+    trailName = trail.change.after.name
+    
+    # Check if KMS key ID is set (encryption at rest)
+    if !(keys(trail.change.after) contains "kms_key_id") {
+        violatingTrails = append(violatingTrails, trailName)
+    } else if trail.change.after.kms_key_id is "" {
+        violatingTrails = append(violatingTrails, trailName)
+    }
+}
+
+# Print report for debugging and reporting
+print("CloudTrail Encryption At Rest Check")
+print("=================================")
+print("CloudTrail resources evaluated:", length(allCloudTrails))
+
+if length(violatingTrails) > 0 {
+    print("Violating trails (encryption at rest not enabled):", violatingTrails)
+} else {
+    print("All CloudTrail resources have encryption at rest enabled.")
+}
+
+# Rule compliance
+cloudtrail_encryption_enabled = length(violatingTrails) == 0

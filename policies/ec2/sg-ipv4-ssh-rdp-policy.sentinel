@@ -1,52 +1,62 @@
-# This policy ensures security groups don't allow unrestricted IPv4 access to SSH and RDP
-# Resource: awscc_ec2_security_group
-
+# This policy ensures AWS Security Group does not allow ingress traffic from 0.0.0.0/0 to ports 22 and 3389
 import "tfplan/v2" as tfplan
+import "tfconfig/v2" as tfconfig
 import "strings"
 
-# Get all security groups
-get_security_groups = func() {
-    resources = filter tfplan.resource_changes as _, rc {
-        rc.type is "awscc_ec2_security_group" and
-        (rc.change.actions contains "create" or rc.change.actions contains "update")
-    }
-    return resources
+# Get all security group ingress rules
+aws_sg_ingress_rules = filter tfplan.resource_changes as _, rc {
+    rc.type is "awscc_ec2_security_group_ingress" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
 }
 
-# Check for unrestricted SSH and RDP access via IPv4
-has_unrestricted_ssh_rdp_ipv4 = func(sg) {
-    if sg.security_group_ingress is null {
-        return false
+# Rule to validate Security Groups don't allow unrestricted SSH or RDP access
+validate_sg_ssh_rdp_ipv4 = rule {
+    all aws_sg_ingress_rules as _, rule {
+        rule.change.after.cidr_ip is not "0.0.0.0/0" or
+        (
+            rule.change.after.from_port != 22 and 
+            rule.change.after.to_port != 22 and
+            rule.change.after.from_port != 3389 and
+            rule.change.after.to_port != 3389 and
+            !(rule.change.after.from_port <= 22 and rule.change.after.to_port >= 22) and
+            !(rule.change.after.from_port <= 3389 and rule.change.after.to_port >= 3389)
+        )
     }
+}
+
+# Reporting function
+report_sg_ssh_rdp_ipv4 = func() {
+    violations = []
     
-    for sg.security_group_ingress as rule {
-        if rule.cidr_ip is "0.0.0.0/0" {
-            if rule.ip_protocol is "-1" {
-                return true
-            }
-            
-            if rule.ip_protocol is "tcp" {
-                from_port = rule.from_port
-                to_port = rule.to_port
-                
-                # Check for SSH (22) and RDP (3389)
-                if (from_port <= 22 and to_port >= 22) or
-                   (from_port <= 3389 and to_port >= 3389) {
-                    return true
-                }
-            }
+    for aws_sg_ingress_rules as address, rule {
+        is_public_cidr = rule.change.after.cidr_ip is "0.0.0.0/0"
+        
+        # Check if port range includes SSH (22) or RDP (3389)
+        allows_ssh = (
+            rule.change.after.from_port == 22 or
+            rule.change.after.to_port == 22 or
+            (rule.change.after.from_port <= 22 and rule.change.after.to_port >= 22)
+        )
+        
+        allows_rdp = (
+            rule.change.after.from_port == 3389 or
+            rule.change.after.to_port == 3389 or
+            (rule.change.after.from_port <= 3389 and rule.change.after.to_port >= 3389)
+        )
+        
+        if is_public_cidr and (allows_ssh or allows_rdp) {
+            append(violations, address)
         }
     }
-    return false
-}
-
-# Main rule
-no_unrestricted_ssh_rdp_ipv4 = rule {
-    all get_security_groups() as sg {
-        not has_unrestricted_ssh_rdp_ipv4(sg.change.after)
+    
+    return {
+        "compliant": length(violations) == 0,
+        "violations": violations,
+        "message": "Security Groups should not allow ingress traffic from 0.0.0.0/0 to ports 22 (SSH) or 3389 (RDP)."
     }
 }
 
+# Main rule that we'll export
 main = rule {
-    no_unrestricted_ssh_rdp_ipv4
+    validate_sg_ssh_rdp_ipv4
 }

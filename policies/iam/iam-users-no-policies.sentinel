@@ -1,24 +1,181 @@
-# This policy ensures IAM users don't have policies directly attached
-# Resources: awscc_iam_user_policy, awscc_iam_user
-
+# This policy ensures AWS IAM Users don't have inline policies attached
 import "tfplan/v2" as tfplan
+import "tfconfig/v2" as tfconfig
+import "strings"
 
-# Check for user policies
-no_user_policies = rule {
-    length(filter tfplan.resource_changes as _, rc {
-        rc.type is "awscc_iam_user_policy" and
-        (rc.change.actions contains "create" or rc.change.actions contains "update")
-    }) is 0
+# Get all IAM user resources
+aws_iam_users = filter tfplan.resource_changes as _, rc {
+    rc.type is "awscc_iam_user" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
 }
 
-# Check for policy attachments to users
-no_policy_attachments = rule {
-    length(filter tfplan.resource_changes as _, rc {
-        rc.type is "awscc_iam_user_policy_attachment" and
-        (rc.change.actions contains "create" or rc.change.actions contains "update")
-    }) is 0
+# Get all IAM managed policies with user paths
+aws_user_managed_policies = filter tfplan.resource_changes as _, rc {
+    rc.type is "awscc_iam_managed_policy" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update") and
+    rc.change.after.path contains "/users/"
 }
 
+# Get all IAM user inline policies
+aws_user_inline_policies = filter tfplan.resource_changes as _, rc {
+    rc.type is "awscc_iam_user_policy" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# Rule to validate no inline policies are attached to users
+validate_no_inline_policies = rule {
+    length(aws_user_managed_policies) == 0 and
+    length(aws_user_inline_policies) == 0
+}
+
+# Check if users have policies embedded directly in their configuration
+validate_no_embedded_policies = rule {
+    all aws_iam_users as _, user {
+        user.change.after.policies is null or
+        length(user.change.after.policies) == 0
+    }
+}
+
+# Enhanced reporting function
+report_no_user_policies = func() {
+    # Initialize detailed violation tracking
+    managed_policy_violations = []
+    inline_policy_violations = []
+    embedded_policy_violations = []
+    
+    # Track detailed information about managed policy violations
+    for aws_user_managed_policies as address, policy {
+        violation_details = {
+            "resource_address": address,
+            "resource_type": "awscc_iam_managed_policy",
+            "policy_name": policy.change.after.policy_name,
+            "path": policy.change.after.path,
+            "violation_type": "Managed policy with user path"
+        }
+        append(managed_policy_violations, violation_details)
+    }
+    
+    # Track detailed information about inline policy violations
+    for aws_user_inline_policies as address, policy {
+        violation_details = {
+            "resource_address": address,
+            "resource_type": "awscc_iam_user_policy",
+            "user_name": policy.change.after.user_name,
+            "policy_name": policy.change.after.policy_name,
+            "violation_type": "Direct inline user policy"
+        }
+        append(inline_policy_violations, violation_details)
+    }
+    
+    # Track detailed information about embedded policy violations
+    for aws_iam_users as address, user {
+        if user.change.after.policies is not null and length(user.change.after.policies) > 0 {
+            policy_names = []
+            if user.change.after.policies is not null {
+                for user.change.after.policies as policy {
+                    if policy.policy_name is not null {
+                        append(policy_names, policy.policy_name)
+                    }
+                }
+            }
+            
+            violation_details = {
+                "resource_address": address,
+                "resource_type": "awscc_iam_user",
+                "user_name": user.change.after.user_name,
+                "embedded_policies": policy_names,
+                "violation_type": "Embedded policy in user definition"
+            }
+            append(embedded_policy_violations, violation_details)
+        }
+    }
+    
+    # Combine all violations for summary reporting
+    all_violations = managed_policy_violations + inline_policy_violations + embedded_policy_violations
+    
+    # Summary statistics
+    summary = {
+        "total_violations": length(all_violations),
+        "managed_policy_violations": length(managed_policy_violations),
+        "inline_policy_violations": length(inline_policy_violations),
+        "embedded_policy_violations": length(embedded_policy_violations),
+    }
+    
+    # Create remediation guidance
+    remediation_steps = [
+        "1. Remove all inline policies from IAM users",
+        "2. Create IAM groups based on job functions",
+        "3. Attach policies to groups instead of individual users",
+        "4. Add users to appropriate groups",
+        "5. For programmatic access, use IAM roles instead of user credentials"
+    ]
+    
+    # Return comprehensive report
+    return {
+        "compliant": length(all_violations) == 0,
+        "summary": summary,
+        "managed_policy_violations": managed_policy_violations,
+        "inline_policy_violations": inline_policy_violations,
+        "embedded_policy_violations": embedded_policy_violations,
+        "all_violations": all_violations,
+        "message": "IAM Users should not have inline policies attached. Use group policies instead.",
+        "remediation": remediation_steps
+    }
+}
+
+# Print detailed reporting information
+print("IAM User Policies Policy Report:")
+print("===============================")
+
+# Check if we have violations
+policy_report = report_no_user_policies()
+if not policy_report.compliant {
+    print("Policy Compliance: FAILED")
+    print("Total Violations:", policy_report.summary.total_violations)
+    print("\nViolation Summary:")
+    print("- Managed Policy Violations:", policy_report.summary.managed_policy_violations)
+    print("- Inline Policy Violations:", policy_report.summary.inline_policy_violations)
+    print("- Embedded Policy Violations:", policy_report.summary.embedded_policy_violations)
+    
+    # Print detailed violation information
+    if length(policy_report.managed_policy_violations) > 0 {
+        print("\nManaged Policy Violations:")
+        for policy_report.managed_policy_violations as violation {
+            print("  - Resource:", violation.resource_address)
+            print("    Policy Name:", violation.policy_name)
+            print("    Path:", violation.path)
+        }
+    }
+    
+    if length(policy_report.inline_policy_violations) > 0 {
+        print("\nInline Policy Violations:")
+        for policy_report.inline_policy_violations as violation {
+            print("  - Resource:", violation.resource_address)
+            print("    User:", violation.user_name)
+            print("    Policy Name:", violation.policy_name)
+        }
+    }
+    
+    if length(policy_report.embedded_policy_violations) > 0 {
+        print("\nEmbedded Policy Violations:")
+        for policy_report.embedded_policy_violations as violation {
+            print("  - Resource:", violation.resource_address)
+            print("    User:", violation.user_name)
+            print("    Embedded Policies:", violation.embedded_policies)
+        }
+    }
+    
+    print("\nRemediation Steps:")
+    for policy_report.remediation as step {
+        print(" ", step)
+    }
+} else {
+    print("Policy Compliance: PASSED")
+    print("No violations found - all IAM users are free of direct policy attachments.")
+}
+
+# Main rule that we'll export
 main = rule {
-    no_user_policies and no_policy_attachments
+    validate_no_inline_policies and
+    validate_no_embedded_policies
 }

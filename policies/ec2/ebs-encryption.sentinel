@@ -12,11 +12,50 @@ get_ebs_volumes = func() {
     return resources
 }
 
-# Check if encryption is enabled
-ebs_encryption_enabled = rule {
-    all get_ebs_volumes() as vol {
-        vol.change.after.encrypted is true
+# Create detailed report of violating resources
+report_non_compliant_volumes = func() {
+    violators = []
+    volumes = get_ebs_volumes()
+    
+    for volumes as vol {
+        if vol.change.after.encrypted is not true {
+            violator = {
+                "address": vol.address,
+                "volume_id": vol.change.after.volume_id is not null ? vol.change.after.volume_id : "New volume",
+                "size": vol.change.after.size is not null ? vol.change.after.size : "Unknown",
+                "az": vol.change.after.availability_zone is not null ? vol.change.after.availability_zone : "Unknown",
+                "message": "EBS volume is not encrypted."
+            }
+            append(violators, violator)
+        }
     }
+    
+    return violators
+}
+
+# Print violation details when policy is violated
+print_report = func(violations) {
+    if length(violations) > 0 {
+        print("EBS Volume Encryption Policy Violations:")
+        print("======================================")
+        for violations as violation {
+            print("- Resource:", violation.address)
+            print("  Volume ID:", violation.volume_id)
+            print("  Size:", violation.size)
+            print("  Availability Zone:", violation.az)
+            print("  Issue:", violation.message)
+            print("")
+        }
+    }
+}
+
+# Check for violations
+violations = report_non_compliant_volumes()
+print_report(violations)
+
+# Main rule
+ebs_encryption_enabled = rule {
+    length(violations) is 0
 }
 
 main = rule {

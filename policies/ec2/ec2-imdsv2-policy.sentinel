@@ -12,12 +12,54 @@ get_ec2_instances = func() {
     return resources
 }
 
-# Check if IMDSv2 is required
-imdsv2_required = rule {
-    all get_ec2_instances() as instance {
-        instance.change.after.metadata_options is not null and
-        instance.change.after.metadata_options.http_tokens is "required"
+# Create detailed report of violating resources
+report_non_compliant_instances = func() {
+    violators = []
+    instances = get_ec2_instances()
+    
+    for instances as instance {
+        if instance.change.after.metadata_options is null or instance.change.after.metadata_options.http_tokens is not "required" {
+            current_value = instance.change.after.metadata_options is null ? "Not set" : 
+                           (instance.change.after.metadata_options.http_tokens is null ? "Not set" : instance.change.after.metadata_options.http_tokens)
+            
+            violator = {
+                "address": instance.address,
+                "instance_id": instance.change.after.instance_id is not null ? instance.change.after.instance_id : "New instance",
+                "instance_type": instance.change.after.instance_type is not null ? instance.change.after.instance_type : "Unknown",
+                "current_value": current_value,
+                "message": "EC2 instance does not require IMDSv2 (http_tokens should be 'required')."
+            }
+            append(violators, violator)
+        }
     }
+    
+    return violators
+}
+
+# Print violation details when policy is violated
+print_report = func(violations) {
+    if length(violations) > 0 {
+        print("EC2 IMDSv2 Policy Violations:")
+        print("============================")
+        for violations as violation {
+            print("- Resource:", violation.address)
+            print("  Instance ID:", violation.instance_id)
+            print("  Instance Type:", violation.instance_type)
+            print("  Current Value:", violation.current_value)
+            print("  Issue:", violation.message)
+            print("  Required Value: 'required'")
+            print("")
+        }
+    }
+}
+
+# Check for violations
+violations = report_non_compliant_instances()
+print_report(violations)
+
+# Main rule
+imdsv2_required = rule {
+    length(violations) is 0
 }
 
 main = rule {

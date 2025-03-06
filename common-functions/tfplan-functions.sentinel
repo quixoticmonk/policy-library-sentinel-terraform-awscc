@@ -1,0 +1,100 @@
+# Common functions for use with Terraform plans
+# This module provides helper functions for working with tfplan/v2 import
+
+# Find all resources of a specific type from all modules
+find_resources_from_plan = func(type) {
+  resources = {}
+
+  # Iterate over all modules in the tfplan import
+  for tfplan.resource_changes as address, rc {
+    # Check if the resource type matches
+    if rc.type is type and
+       (rc.change.actions contains "create" or rc.change.actions contains "update") {
+      # Add the resource to the return map, keyed by address
+      resources[address] = rc
+    }
+  }
+
+  return resources
+}
+
+# Find all resources from a specific provider
+find_resources_by_provider = func(provider) {
+  resources = {}
+
+  # Iterate over all modules in the tfplan import
+  for tfplan.resource_changes as address, rc {
+    # Check if the resource provider matches
+    if strings.has_prefix(rc.provider_name, provider) and
+       (rc.change.actions contains "create" or rc.change.actions contains "update") {
+      # Add the resource to the return map, keyed by address
+      resources[address] = rc
+    }
+  }
+
+  return resources
+}
+
+# Find all AWSCC resources
+find_awscc_resources = func() {
+  return find_resources_by_provider("registry.terraform.io/hashicorp/awscc")
+}
+
+# Get all resources of a specific type
+filter_resources_by_type = func(resources, type) {
+  filtered = {}
+
+  for resources as address, rc {
+    if rc.type is type {
+      filtered[address] = rc
+    }
+  }
+
+  return filtered
+}
+
+# Check if a resource has a specific attribute defined
+has_attribute = func(resource, attribute) {
+  # First check the "after" values
+  if resource.change.after is not null and
+     resource.change.after[attribute] is not null {
+    return true
+  }
+
+  # Then check planned values if after is null
+  if resource.planned_values is not null and
+     resource.planned_values.root_module is not null and
+     resource.planned_values.root_module.resources is not null {
+    for resource.planned_values.root_module.resources as _, r {
+      if r.address is resource.address and
+         r.values[attribute] is not null {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+# Get value of attribute from resource
+get_attribute_value = func(resource, attribute) {
+  # First try to get it from the "after" values
+  if resource.change.after is not null and
+     resource.change.after[attribute] is not null {
+    return resource.change.after[attribute]
+  }
+
+  # Then try to get it from planned values if after is null
+  if resource.planned_values is not null and
+     resource.planned_values.root_module is not null and
+     resource.planned_values.root_module.resources is not null {
+    for resource.planned_values.root_module.resources as _, r {
+      if r.address is resource.address and
+         r.values[attribute] is not null {
+        return r.values[attribute]
+      }
+    }
+  }
+
+  return null
+}

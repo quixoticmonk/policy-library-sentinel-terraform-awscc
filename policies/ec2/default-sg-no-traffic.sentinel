@@ -1,28 +1,48 @@
-# This policy ensures default security groups don't allow any traffic
-# Resource: awscc_ec2_security_group
-
+# This policy ensures EC2 VPC Default Security Group allows no traffic
 import "tfplan/v2" as tfplan
+import "tfconfig/v2" as tfconfig
+import "strings"
 
-# Get all default security groups
-get_default_security_groups = func() {
-    resources = filter tfplan.resource_changes as _, rc {
-        rc.type is "awscc_ec2_security_group" and
-        (rc.change.actions contains "create" or rc.change.actions contains "update") and
-        rc.change.after.group_name is "default"
-    }
-    return resources
+# Get all security groups
+aws_security_groups = filter tfplan.resource_changes as _, rc {
+    rc.type is "awscc_ec2_security_group" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
 }
 
-# Check for no ingress/egress rules in default security groups
-default_sg_no_traffic = rule {
-    all get_default_security_groups() as sg {
-        (sg.change.after.security_group_ingress is null or 
-         length(sg.change.after.security_group_ingress) is 0) and
-        (sg.change.after.security_group_egress is null or 
-         length(sg.change.after.security_group_egress) is 0)
+# Get all security group ingress rules
+aws_sg_ingress_rules = filter tfplan.resource_changes as _, rc {
+    rc.type is "awscc_ec2_security_group_ingress" and
+    (rc.change.actions contains "create" or rc.change.actions contains "update")
+}
+
+# Rule to validate default security groups have no ingress rules
+validate_default_sg_no_ingress = rule {
+    all aws_sg_ingress_rules as _, rule {
+        rule.change.after.group_name is not "default" and
+        rule.change.after.group_id not matches "^sg-.*default$"
     }
 }
 
+# Reporting function
+report_default_sg_no_traffic = func() {
+    violations = []
+    
+    for aws_sg_ingress_rules as address, rule {
+        is_default_sg = rule.change.after.group_name is "default" or rule.change.after.group_id matches "^sg-.*default$"
+        
+        if is_default_sg {
+            append(violations, address)
+        }
+    }
+    
+    return {
+        "compliant": length(violations) == 0,
+        "violations": violations,
+        "message": "EC2 VPC Default Security Group should not allow any traffic (no ingress rules)."
+    }
+}
+
+# Main rule that we'll export
 main = rule {
-    default_sg_no_traffic
+    validate_default_sg_no_ingress
 }

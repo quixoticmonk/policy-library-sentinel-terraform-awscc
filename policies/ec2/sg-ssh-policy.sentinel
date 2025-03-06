@@ -55,11 +55,50 @@ has_unrestricted_ssh = func(sg) {
     return false
 }
 
+# Create detailed report of violating resources
+report_non_compliant_security_groups = func() {
+    violators = []
+    security_groups = get_security_groups()
+    
+    for security_groups as sg {
+        if has_unrestricted_ssh(sg.change.after) {
+            violator = {
+                "address": sg.address,
+                "group_id": sg.change.after.group_id is not null ? sg.change.after.group_id : "New security group",
+                "group_name": sg.change.after.group_name is not null ? sg.change.after.group_name : "Unknown",
+                "vpc_id": sg.change.after.vpc_id is not null ? sg.change.after.vpc_id : "Unknown",
+                "message": "Security group allows unrestricted access (0.0.0.0/0 or ::/0) to SSH port 22."
+            }
+            append(violators, violator)
+        }
+    }
+    
+    return violators
+}
+
+# Print violation details when policy is violated
+print_report = func(violations) {
+    if length(violations) > 0 {
+        print("Security Group SSH Access Policy Violations:")
+        print("=========================================")
+        for violations as violation {
+            print("- Resource:", violation.address)
+            print("  Group ID:", violation.group_id)
+            print("  Group Name:", violation.group_name)
+            print("  VPC ID:", violation.vpc_id)
+            print("  Issue:", violation.message)
+            print("")
+        }
+    }
+}
+
+# Check for violations
+violations = report_non_compliant_security_groups()
+print_report(violations)
+
 # Main rule
 no_unrestricted_ssh = rule {
-    all get_security_groups() as sg {
-        not has_unrestricted_ssh(sg.change.after)
-    }
+    length(violations) is 0
 }
 
 main = rule {

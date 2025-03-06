@@ -23,12 +23,46 @@ has_flow_logging = func(vpc_id) {
     return length(flow_logs) > 0
 }
 
+# Create detailed report of violating resources
+report_non_compliant_vpcs = func() {
+    violators = []
+    vpcs = get_vpcs()
+    
+    for vpcs as vpc {
+        if vpc.change.after.id is not null and not has_flow_logging(vpc.change.after.id) {
+            violator = {
+                "address": vpc.address,
+                "id": vpc.change.after.id,
+                "message": "VPC flow logging is not enabled for this VPC."
+            }
+            append(violators, violator)
+        }
+    }
+    
+    return violators
+}
+
+# Print violation details when policy is violated
+print_report = func(violations) {
+    if length(violations) > 0 {
+        print("VPC Flow Logging Policy Violations:")
+        print("==================================")
+        for violations as violation {
+            print("- Resource:", violation.address)
+            print("  ID:", violation.id)
+            print("  Issue:", violation.message)
+            print("")
+        }
+    }
+}
+
+# Check for violations
+violations = report_non_compliant_vpcs()
+print_report(violations)
+
 # Main rule
 vpcs_with_flow_logs = rule {
-    all get_vpcs() as vpc {
-        vpc.change.after.id is not null and
-        has_flow_logging(vpc.change.after.id)
-    }
+    length(violations) is 0
 }
 
 main = rule {

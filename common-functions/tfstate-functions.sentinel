@@ -1,0 +1,85 @@
+# Common functions for use with Terraform state
+# This module provides helper functions for working with tfstate/v2 import
+
+# Find all resources of a specific type from all modules in state
+find_resources_from_state = func(type) {
+  resources = {}
+
+  # Iterate over all modules in the tfstate import
+  if tfstate.values is not null and
+     tfstate.values.root_module is not null and
+     tfstate.values.root_module.resources is not null {
+    for tfstate.values.root_module.resources as r {
+      if r.type is type {
+        # Add the resource to the return map, keyed by address
+        resources[r.address] = r
+      }
+    }
+  }
+
+  # Also check child modules
+  if tfstate.values is not null and
+     tfstate.values.root_module is not null and
+     tfstate.values.root_module.child_modules is not null {
+    for tfstate.values.root_module.child_modules as module {
+      if module.resources is not null {
+        for module.resources as r {
+          if r.type is type {
+            # Add the resource to the return map, keyed by address
+            resources[r.address] = r
+          }
+        }
+      }
+    }
+  }
+
+  return resources
+}
+
+# Find all resources from a specific provider in state
+find_resources_by_provider_from_state = func(provider) {
+  resources = {}
+
+  # Iterate over all modules in the tfstate import
+  if tfstate.values is not null and
+     tfstate.values.root_module is not null and
+     tfstate.values.root_module.resources is not null {
+    for tfstate.values.root_module.resources as r {
+      if strings.has_prefix(r.provider_name, provider) {
+        # Add the resource to the return map, keyed by address
+        resources[r.address] = r
+      }
+    }
+  }
+
+  # Also check child modules
+  if tfstate.values is not null and
+     tfstate.values.root_module is not null and
+     tfstate.values.root_module.child_modules is not null {
+    for tfstate.values.root_module.child_modules as module {
+      if module.resources is not null {
+        for module.resources as r {
+          if strings.has_prefix(r.provider_name, provider) {
+            # Add the resource to the return map, keyed by address
+            resources[r.address] = r
+          }
+        }
+      }
+    }
+  }
+
+  return resources
+}
+
+# Find all AWSCC resources in state
+find_awscc_resources_from_state = func() {
+  return find_resources_by_provider_from_state("registry.terraform.io/hashicorp/awscc")
+}
+
+# Get value of attribute from resource in state
+get_attribute_from_state = func(resource, attribute) {
+  if resource.values[attribute] is not null {
+    return resource.values[attribute]
+  }
+  return null
+}

@@ -7,7 +7,7 @@ import "json"
 # Get all IAM policies
 get_iam_policies = func() {
     resources = filter tfplan.resource_changes as _, rc {
-        rc.type is "awscc_iam_policy" and
+        rc.type is "awscc_iam_user_policy" and
         (rc.change.actions contains "create" or rc.change.actions contains "update")
     }
     return resources
@@ -41,12 +41,46 @@ has_admin_privileges = func(policy_document) {
     return false
 }
 
+# Create detailed report of violating resources
+report_non_compliant_policies = func() {
+    violators = []
+    policies = get_iam_policies()
+    
+    for policies as policy {
+        if policy.change.after.policy_document is not null and has_admin_privileges(policy.change.after.policy_document) {
+            violator = {
+                "address": policy.address,
+                "policy_name": policy.change.after.policy_name,
+                "message": "IAM policy contains wildcard (*) administrative privileges."
+            }
+            append(violators, violator)
+        }
+    }
+    
+    return violators
+}
+
+# Print violation details when policy is violated
+print_report = func(violations) {
+    if length(violations) > 0 {
+        print("IAM Administrative Privileges Policy Violations:")
+        print("=============================================")
+        for violations as violation {
+            print("- Resource:", violation.address)
+            print("  Policy Name:", violation.policy_name)
+            print("  Issue:", violation.message)
+            print("")
+        }
+    }
+}
+
+# Check for violations
+violations = report_non_compliant_policies()
+print_report(violations)
+
 # Main rule
 no_admin_privileges = rule {
-    all get_iam_policies() as policy {
-        policy.change.after.policy_document is not null and
-        not has_admin_privileges(policy.change.after.policy_document)
-    }
+    length(violations) is 0
 }
 
 main = rule {

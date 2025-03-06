@@ -12,11 +12,46 @@ get_efs_file_systems = func() {
     return resources
 }
 
-# Check if encryption is enabled
-efs_encryption_enabled = rule {
-    all get_efs_file_systems() as efs {
-        efs.change.after.encrypted is true
+# Create detailed report of violating resources
+report_non_compliant_efs = func() {
+    violators = []
+    file_systems = get_efs_file_systems()
+    
+    for file_systems as fs {
+        if fs.change.after.encrypted is not true {
+            violator = {
+                "address": fs.address,
+                "fs_id": fs.change.after.file_system_id is not null ? fs.change.after.file_system_id : "New resource",
+                "message": "EFS file system is not encrypted."
+            }
+            append(violators, violator)
+        }
     }
+    
+    return violators
+}
+
+# Print violation details when policy is violated
+print_report = func(violations) {
+    if length(violations) > 0 {
+        print("EFS Encryption Policy Violations:")
+        print("================================")
+        for violations as violation {
+            print("- Resource:", violation.address)
+            print("  File System ID:", violation.fs_id)
+            print("  Issue:", violation.message)
+            print("")
+        }
+    }
+}
+
+# Check for violations
+violations = report_non_compliant_efs()
+print_report(violations)
+
+# Main rule
+efs_encryption_enabled = rule {
+    length(violations) is 0
 }
 
 main = rule {

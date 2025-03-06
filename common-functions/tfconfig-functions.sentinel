@@ -1,0 +1,96 @@
+# Common functions for use with Terraform configuration
+# This module provides helper functions for working with tfconfig/v2 import
+
+# Find all resources of a specific type from all modules in configuration
+find_resources_from_config = func(type) {
+  resources = {}
+
+  # Iterate over all modules in the tfconfig import
+  if tfconfig.resources is not null {
+    for tfconfig.resources as address, rc {
+      if rc.type is type {
+        # Add the resource to the return map, keyed by address
+        resources[address] = rc
+      }
+    }
+  }
+
+  # Also check child modules
+  if tfconfig.module_calls is not null {
+    for tfconfig.module_calls as module_name, module {
+      if module.module is not null and module.module.resources is not null {
+        for module.module.resources as address, rc {
+          if rc.type is type {
+            # Add the resource to the return map, keyed by address
+            full_address = "module." + module_name + "." + address
+            resources[full_address] = rc
+          }
+        }
+      }
+    }
+  }
+
+  return resources
+}
+
+# Find all resources from a specific provider in configuration
+find_resources_by_provider_from_config = func(provider) {
+  resources = {}
+
+  # Iterate over all modules in the tfconfig import
+  if tfconfig.resources is not null {
+    for tfconfig.resources as address, rc {
+      if strings.has_prefix(rc.provider_config_key, provider) {
+        # Add the resource to the return map, keyed by address
+        resources[address] = rc
+      }
+    }
+  }
+
+  # Also check child modules
+  if tfconfig.module_calls is not null {
+    for tfconfig.module_calls as module_name, module {
+      if module.module is not null and module.module.resources is not null {
+        for module.module.resources as address, rc {
+          if strings.has_prefix(rc.provider_config_key, provider) {
+            # Add the resource to the return map, keyed by address
+            full_address = "module." + module_name + "." + address
+            resources[full_address] = rc
+          }
+        }
+      }
+    }
+  }
+
+  return resources
+}
+
+# Find all AWSCC resources in configuration
+find_awscc_resources_from_config = func() {
+  return find_resources_by_provider_from_config("awscc")
+}
+
+# Check if a resource has a specific attribute defined in configuration
+has_attribute_in_config = func(resource, attribute) {
+  if resource.config is not null and resource.config[attribute] is not null {
+    return true
+  }
+  return false
+}
+
+# Get value of attribute from resource in configuration
+get_attribute_from_config = func(resource, attribute) {
+  if resource.config is not null and resource.config[attribute] is not null {
+    return resource.config[attribute]
+  }
+  return null
+}
+
+# Find blocks in a resource configuration
+find_blocks = func(resource, block_type) {
+  blocks = []
+  if resource.config is not null and resource.config[block_type] is not null {
+    blocks = resource.config[block_type]
+  }
+  return blocks
+}

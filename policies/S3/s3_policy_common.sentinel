@@ -1,0 +1,167 @@
+# Common functions and reporting framework for S3 bucket policies
+import "tfplan/v2" as tfplan
+import "time"
+
+# Get all S3 bucket resources from the AWSCC provider
+get_s3_buckets = func() {
+    return filter tfplan.resource_changes as _, rc {
+        rc.type is "awscc_s3_bucket" and
+        (rc.mode is "managed" or rc.mode is "data") and
+        (rc.change.actions contains "create" or rc.change.actions contains "update")
+    }
+}
+
+# Function to get bucket name or address if name isn't available
+get_bucket_identifier = func(bucket) {
+    if "bucket_name" in keys(bucket.change.after) {
+        return bucket.change.after.bucket_name
+    } else {
+        return bucket.address
+    }
+}
+
+# Run check function against all buckets and collect violations
+check_all_buckets = func(buckets, check_func) {
+    violations = []
+    
+    for buckets as address, bucket {
+        bucket_id = get_bucket_identifier(bucket)
+        result = check_func(bucket)
+        
+        if not result.compliant {
+            append(violations, {
+                "bucket": bucket_id,
+                "address": address,
+                "reason": result.reason
+            })
+        }
+    }
+    
+    return violations
+}
+
+# Generate a formatted report for any policy
+generate_report = func(violations, policy_name) {
+    timestamp = time.now.rfc3339
+    
+    # Count buckets
+    total_buckets = length(filter tfplan.resource_changes as _, rc {
+        rc.type is "awscc_s3_bucket" and
+        (rc.mode is "managed" or rc.mode is "data") and
+        (rc.change.actions contains "create" or rc.change.actions contains "update")
+    })
+    
+    compliant_buckets = total_buckets - length(violations)
+    
+    # Calculate compliance percentage
+    compliance_percentage = 0
+    if total_buckets > 0 {
+        compliance_percentage = (compliant_buckets * 100) / total_buckets
+    }
+    
+    # Build the report
+    report_message = "## S3 Bucket Policy Compliance Report: " + policy_name + "\n\n"
+    report_message += "**Report Generated:** " + timestamp + "\n\n"
+    report_message += "### Summary\n"
+    report_message += "- Total S3 buckets evaluated: " + string(total_buckets) + "\n"
+    report_message += "- Compliant buckets: " + string(compliant_buckets) + " (" + string(compliance_percentage) + "%)\n"
+    report_message += "- Non-compliant buckets: " + string(length(violations)) + "\n\n"
+    
+    if length(violations) > 0 {
+        report_message += "### Non-Compliant Resources\n"
+        report_message += "| Bucket Name | Reason |\n"
+        report_message += "|-------------|--------|\n"
+        
+        for violations as idx, violation {
+            report_message += "| " + violation.bucket + " | " + violation.reason + " |\n"
+        }
+        report_message += "\n"
+    }
+    
+    # Overall compliance
+    overall_compliant = length(violations) == 0
+    if total_buckets > 0 {
+        report_message += "### Compliance Status: " + (overall_compliant ? "COMPLIANT ✅" : "NON-COMPLIANT ❌") + "\n\n"
+    } else {
+        report_message += "### Compliance Status: N/A (No S3 buckets in plan)\n\n"
+    }
+    
+    # Add remediation guidelines based on policy name
+    report_message += "### Remediation Guidelines\n"
+    
+    if policy_name is "S3 Block Public Access Enabled" or policy_name is "S3 Block Public Access Enabled at Bucket Level" {
+        report_message += "To enable block public access settings:\n\n"
+        report_message += "```hcl\n"
+        report_message += "resource \"awscc_s3_bucket\" \"example\" {\n"
+        report_message += "  bucket_name = \"example-bucket\"\n\n"
+        report_message += "  public_access_block_configuration {\n"
+        report_message += "    block_public_acls       = true\n"
+        report_message += "    block_public_policy     = true\n"
+        report_message += "    ignore_public_acls      = true\n"
+        report_message += "    restrict_public_buckets = true\n"
+        report_message += "  }\n"
+        report_message += "}\n"
+        report_message += "```\n"
+    } else if policy_name is "S3 Object-Level Read Logging" or policy_name is "S3 Object-Level Write Logging" {
+        report_message += "To enable object-level logging for S3 buckets:\n\n"
+        report_message += "```hcl\n"
+        report_message += "resource \"awscc_cloudtrail_trail\" \"example\" {\n"
+        report_message += "  name = \"s3-object-logging-trail\"\n"
+        report_message += "  s3_bucket_name = \"cloudtrail-bucket\"\n\n"
+        report_message += "  event_selectors {\n"
+        if policy_name is "S3 Object-Level Read Logging" {
+            report_message += "    read_write_type = \"ReadOnly\"  # Use 'All' for both read and write\n"
+        } else {
+            report_message += "    read_write_type = \"WriteOnly\"  # Use 'All' for both read and write\n"
+        }
+        report_message += "    include_management_events = true\n\n"
+        report_message += "    data_resources {\n"
+        report_message += "      type = \"AWS::S3::Object\"\n"
+        report_message += "      values = [\"arn:aws:s3:::your-bucket-name/\"]\n"
+        report_message += "    }\n"
+        report_message += "  }\n"
+        report_message += "}\n"
+        report_message += "```\n"
+    } else if policy_name is "S3 MFA Delete Enabled" {
+        report_message += "To enable MFA Delete for S3 buckets:\n\n"
+        report_message += "```hcl\n"
+        report_message += "resource \"awscc_s3_bucket\" \"example\" {\n"
+        report_message += "  bucket_name = \"example-bucket\"\n\n"
+        report_message += "  versioning_configuration {\n"
+        report_message += "    status = \"Enabled\"\n"
+        report_message += "    mfa_delete = \"Enabled\"\n"
+        report_message += "  }\n"
+        report_message += "}\n"
+        report_message += "```\n"
+        report_message += "Note: Enabling MFA Delete requires using the AWS CLI with MFA authentication.\n"
+    } else if policy_name is "S3 SSL Required for All Requests" {
+        report_message += "To require SSL for all S3 bucket requests:\n\n"
+        report_message += "```hcl\n"
+        report_message += "resource \"awscc_s3_bucket\" \"example\" {\n"
+        report_message += "  bucket_name = \"example-bucket\"\n\n"
+        report_message += "  policy = jsonencode({\n"
+        report_message += "    Version = \"2012-10-17\"\n"
+        report_message += "    Statement = [\n"
+        report_message += "      {\n"
+        report_message += "        Sid = \"DenyInsecureTransport\"\n"
+        report_message += "        Effect = \"Deny\"\n"
+        report_message += "        Principal = \"*\"\n"
+        report_message += "        Action = \"s3:*\"\n"
+        report_message += "        Resource = [\n"
+        report_message += "          \"arn:aws:s3:::example-bucket\",\n"
+        report_message += "          \"arn:aws:s3:::example-bucket/*\"\n"
+        report_message += "        ]\n"
+        report_message += "        Condition = {\n"
+        report_message += "          Bool = {\n"
+        report_message += "            \"aws:SecureTransport\" = \"false\"\n"
+        report_message += "          }\n"
+        report_message += "        }\n"
+        report_message += "      }\n"
+        report_message += "    ]\n"
+        report_message += "  })\n"
+        report_message += "}\n"
+        report_message += "```\n"
+    }
+    
+    return report_message
+}
